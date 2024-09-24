@@ -161,7 +161,6 @@ def copy_and_modify_template(template_url, destination_folder_id, replacements, 
         document = drive_service.files().get(fileId=doc_id, supportsAllDrives=True).execute()
 
         new_file_name = f"{item_name}-{document['name']}"
-        print(new_file_name)
 
         copied_file = drive_service.files().copy(
             fileId=doc_id,
@@ -228,6 +227,7 @@ def main():
                         item_id=item['Item ID']  # Pass item ID here
                     )
             update_item_status(item['Item ID'], "Generate completed")
+
 
 if __name__ == "__main__":
     main()
