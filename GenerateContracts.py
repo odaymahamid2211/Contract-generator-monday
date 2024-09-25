@@ -67,7 +67,6 @@ def get_items_from_board():
     items_list = []
 
     items = monday_data['data']["boards"][0]["groups"][0]['items_page']['items']
-    print(items)
     for item in items:
         item_id = item['id']
         item_name = item['name']
@@ -175,9 +174,12 @@ def copy_and_modify_template(template_url, destination_folder_id, replacements, 
 
         modify_google_doc(copied_file['id'], replacements)
 
+        return f"https://docs.google.com/document/d/{copied_file['id']}/edit"
+
     except Exception as e:
         print(f"Error copying or modifying document ID {doc_id}: {e}")
         update_item_status(item_id, "Stuck")  # Update status to "Stuck"
+        return None
 
 
 def update_item_status(item_id, status_label):
@@ -189,6 +191,26 @@ def update_item_status(item_id, status_label):
         }}
     }}
     '''.format(board_id=board_id, item_id=item_id, status_label=status_label)
+
+    headers = {
+        "Authorization": api_token,
+        "Content-Type": "application/json"
+    }
+    requests.post(url, headers=headers, json={"query": query})
+
+
+def send_completion_update(item_id, document_links):
+    links_message = "\n".join([f"Link {index + 1}: {link}" for index, link in enumerate(document_links)])
+    message = f"The task has been completed successfully. Here are the links to the new documents:\n{links_message}"
+
+    url = "https://api.monday.com/v2"
+    query = '''
+    mutation {{
+        create_update(item_id: {item_id}, body: "{message}") {{
+            id
+        }}
+    }}
+    '''.format(item_id=item_id, message=message.replace('"', '\\"'))
 
     headers = {
         "Authorization": api_token,
@@ -217,17 +239,21 @@ def main():
 
             template_urls = re.findall(r'(https?://[^\s),]+)', contracts_templates)
 
+            document_links = []
             for template_url in template_urls:
                 if destination_folder_id:
-                    copy_and_modify_template(
+                    doc_link = copy_and_modify_template(
                         template_url=template_url,
                         destination_folder_id=destination_folder_id,
                         replacements=replacements,
-                        item_name=item['Name'],  # Pass item name here
-                        item_id=item['Item ID']  # Pass item ID here
+                        item_name=item['Name'],
+                        item_id=item['Item ID']
                     )
-            update_item_status(item['Item ID'], "Generate completed")
+                    if doc_link:
+                        document_links.append(doc_link)
 
+            send_completion_update(item['Item ID'], document_links)
+            update_item_status(item['Item ID'], "Generate completed")
 
 if __name__ == "__main__":
     main()
