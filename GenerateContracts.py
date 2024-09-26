@@ -16,18 +16,23 @@ scopes = [
 
 # Column mapping for item details
 column_mapping = {
-    "{{QuoteDate}}": None,
     "{{CompanyFullName}}": None,
-    "{{CompanyAddress}}": None,
     "{{CompanyDomain}}": None,
     "{{CompanyNumber}}": None,
+    "{{CompanyLawsState}}": None,
+    "{{CompanyVATNumber}}" : None,
+    "{{CompanyAddress}}": None,
+    "{{QuoteDate}}": None,
     "{{Currency}}": None,
     "{{PaymentDaysTerm}}": None,
-    "{{WhichContracts}}": None,
-    "{{ContractFolder}}": None,
-    "Action": None,
-    "Contracts Templates": None,
+    "{{ContactEmail}}": None,
+    "{{SalesManagerName}}": None,
+    "{{SalesManagerEmail}}": None,
+    "{{CEName}}": None,
+    "{{CEEmail}}": None,
     "Destination Folder": None,
+    "Contracts Templates": None,
+    "Action": None,
 }
 
 # Set up Google API client
@@ -40,7 +45,7 @@ def get_items_from_board():
     query = '''
     query {{
         boards(ids: [{board_id}]) {{
-            groups {{
+            groups(ids: ["topics"]) {{
                 id
                 title
                 items_page {{
@@ -96,6 +101,7 @@ def get_items_from_board():
 
     return items_list
 
+
 def map_columns_to_dict(column_values):
     mapped_dict = column_mapping.copy()
     columns_list = list(mapped_dict.keys())
@@ -104,7 +110,25 @@ def map_columns_to_dict(column_values):
         if index < len(columns_list):
             mapped_dict[columns_list[index]] = value
 
+    # Extract SalesManagerName and SalesManagerEmail from the formatted text
+    sales_manager_details = mapped_dict.get("{{SalesManagerName}}", "")
+    if sales_manager_details:
+        match = re.match(r'([^(]+)\s*\(.*?,\s*([^,]+)', sales_manager_details)
+        if match:
+            mapped_dict["{{SalesManagerName}}"] = match.group(1).strip()
+            mapped_dict["{{SalesManagerEmail}}"] = match.group(2).strip()
+
+    # Extract CEName and CEmail from the formatted text
+    ce_details = mapped_dict.get("{{CEName}}", "")
+    if ce_details:
+        match = re.match(r'([^(]+)\s*\(.*?,\s*([^,]+)', ce_details)
+        if match:
+            mapped_dict["{{CEName}}"] = match.group(1).strip()
+            mapped_dict["{{CEEmail}}"] = match.group(2).strip()
+
     return mapped_dict
+
+
 
 def fetch_linked_item_details(item_id):
     url = "https://api.monday.com/v2"
@@ -224,36 +248,34 @@ def main():
     print(output)
     for item in output:
         item_columns = item['Columns']
-        if item_columns.get('Action') == 'Generate contract':
-            # Update the Action field to "Working on it"
-            update_item_status(item['Item ID'], "Working on it")
+        update_item_status(item['Item ID'], "Working on it")
 
-            replacements = {key: value for key, value in item_columns.items() if value}
+        replacements = {key: value for key, value in item_columns.items() if value}
 
             # Get the list of template URLs
-            contracts_templates = item_columns.get("Contracts Templates", "")
-            destination_folder_url = item_columns.get("Destination Folder", "")
+        contracts_templates = item_columns.get("Contracts Templates", "")
+        destination_folder_url = item_columns.get("Destination Folder", "")
 
-            folder_id_match = re.search(r'folders/([a-zA-Z0-9-_]+)|id=([a-zA-Z0-9-_]+)', destination_folder_url)
-            destination_folder_id = folder_id_match.group(1) if folder_id_match else None
+        folder_id_match = re.search(r'folders/([a-zA-Z0-9-_]+)|id=([a-zA-Z0-9-_]+)', destination_folder_url)
+        destination_folder_id = folder_id_match.group(1) if folder_id_match else None
 
-            template_urls = re.findall(r'(https?://[^\s),]+)', contracts_templates)
+        template_urls = re.findall(r'(https?://[^\s),]+)', contracts_templates)
 
-            document_links = []
-            for template_url in template_urls:
-                if destination_folder_id:
-                    doc_link = copy_and_modify_template(
-                        template_url=template_url,
-                        destination_folder_id=destination_folder_id,
-                        replacements=replacements,
-                        item_name=item['Name'],
-                        item_id=item['Item ID']
+        document_links = []
+        for template_url in template_urls:
+            if destination_folder_id:
+                 doc_link = copy_and_modify_template(
+                       template_url=template_url,
+                       destination_folder_id=destination_folder_id,
+                       replacements=replacements,
+                       item_name=item['Name'],
+                       item_id=item['Item ID']
                     )
-                    if doc_link:
+                 if doc_link:
                         document_links.append(doc_link)
 
-            send_completion_update(item['Item ID'], document_links)
-            update_item_status(item['Item ID'], "Generate completed")
+        send_completion_update(item['Item ID'], document_links)
+        update_item_status(item['Item ID'], "Generate completed")
 
 if __name__ == "__main__":
     main()
