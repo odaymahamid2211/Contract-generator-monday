@@ -1,3 +1,5 @@
+from urllib import response
+
 import requests
 import json
 from googleapiclient.discovery import build
@@ -227,6 +229,9 @@ def send_completion_update(item_id, document_links):
     links_message = "\n".join([f"Link {index + 1}: {link}" for index, link in enumerate(document_links)])
     message = f"The task has been completed successfully. Here are the links to the new documents:\n{links_message}"
 
+    # Escape double quotes and newlines for GraphQL
+    escaped_message = message.replace('"', '\\"').replace('\n', ' ')
+
     url = "https://api.monday.com/v2"
     query = '''
     mutation {{
@@ -234,7 +239,7 @@ def send_completion_update(item_id, document_links):
             id
         }}
     }}
-    '''.format(item_id=item_id, message=message.replace('"', '\\"'))
+    '''.format(item_id=item_id, message=escaped_message)
 
     headers = {
         "Authorization": api_token,
@@ -252,7 +257,6 @@ def main():
 
         replacements = {key: value for key, value in item_columns.items() if value}
 
-            # Get the list of template URLs
         contracts_templates = item_columns.get("Contracts Templates", "")
         destination_folder_url = item_columns.get("Destination Folder", "")
 
