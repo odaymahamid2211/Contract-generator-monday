@@ -226,11 +226,14 @@ def update_item_status(item_id, status_label):
 
 
 def send_completion_update(item_id, document_links):
-    links_message = "\n".join([f"Link {index + 1}: {link}" for index, link in enumerate(document_links)])
-    message = f"The task has been completed successfully. Here are the links to the new documents:\n{links_message}"
+    # Create links message with extra spacing
+    links_message = "\n\n".join([f"Link {index + 1}: {link}" for index, link in enumerate(document_links)])  # Double spacing
+
+    # Build the full message with additional line breaks
+    message = f"The task has been completed successfully.\n\nHere are the links to the new documents:\n\n{links_message}\n\n"  # Add extra spacing
 
     # Escape double quotes and newlines for GraphQL
-    escaped_message = message.replace('"', '\\"').replace('\n', ' ')
+    escaped_message = message.replace('"', '\\"').replace('\n', ' ')  # Newlines will be replaced with space for GraphQL
 
     url = "https://api.monday.com/v2"
     query = '''
@@ -246,6 +249,10 @@ def send_completion_update(item_id, document_links):
         "Content-Type": "application/json"
     }
     requests.post(url, headers=headers, json={"query": query})
+
+
+
+
 
 
 def main():
