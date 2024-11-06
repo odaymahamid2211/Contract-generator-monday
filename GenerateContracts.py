@@ -1,5 +1,3 @@
-from urllib import response
-
 import requests
 import json
 from googleapiclient.discovery import build
@@ -225,33 +223,29 @@ def update_item_status(item_id, status_label):
     requests.post(url, headers=headers, json={"query": query})
 
 
+
+
+
 def send_completion_update(item_id, document_links):
-    # Create links message with extra spacing
-    links_message = "\n\n".join([f"Link {index + 1}: {link}" for index, link in enumerate(document_links)])  # Double spacing
-
-    # Build the full message with additional line breaks
-    message = f"The task has been completed successfully.\n\nHere are the links to the new documents:\n\n{links_message}\n\n"  # Add extra spacing
-
-    # Escape double quotes and newlines for GraphQL
-    escaped_message = message.replace('"', '\\"').replace('\n', ' ')  # Newlines will be replaced with space for GraphQL
+    links_message = "\n".join([f"Link {index + 1}: {link}" for index, link in enumerate(document_links)])
+    message = f"The task has been completed successfully. Here are the links to the new documents:\n{links_message}"
 
     url = "https://api.monday.com/v2"
-    query = '''
-    mutation {{
-        create_update(item_id: {item_id}, body: "{message}") {{
-            id
+    query = {
+        "query": f'''
+        mutation {{
+            create_update(item_id: {item_id}, body: "{message.replace('"', '\\"')}") {{
+                id
+            }}
         }}
-    }}
-    '''.format(item_id=item_id, message=escaped_message)
+        '''
+    }
 
     headers = {
         "Authorization": api_token,
         "Content-Type": "application/json"
     }
-    requests.post(url, headers=headers, json={"query": query})
-
-
-
+    requests.post(url, headers=headers, json=query)
 
 
 
