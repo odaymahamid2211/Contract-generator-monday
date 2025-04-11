@@ -5,7 +5,7 @@ from google.oauth2 import service_account
 import re
 
 # API credentials and configurations
-api_token = "eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjM5MzQ5Mzg3NiwiYWFpIjoxMSwidWlkIjo0MDMzODA5MCwiaWFkIjoiMjAyNC0wOC0wNlQxMTozMzowMC4wMDBaIiwicGVyIjoibWU6d3JpdGUiLCJhY3RpZCI6NjMyNDEyNCwicmduIjoidXNlMSJ9.0u1Wk85mFM50YptDZ65-6maJl0Jwhlhtzb8rYXFs8I0"  # Replace with your actual token
+api_token = "eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjQ0Mjk5MTA4NCwiYWFpIjoxMSwidWlkIjozNzM0Mzc2NSwiaWFkIjoiMjAyNC0xMi0wMVQxNTowNDo0MS44NDhaIiwicGVyIjoibWU6d3JpdGUiLCJhY3RpZCI6NjMyNDEyNCwicmduIjoidXNlMSJ9.zaheuo0ErsW3lC4bPF_am92YdjZeByTUNWJnhsk1lR8"
 board_id = "7167670399"
 service_account_file = "C:\\Users\\oday\\Desktop\\Contracts\\pythonProject\\generate-reports.json"  # Path to your service account JSON
 scopes = [
@@ -20,7 +20,7 @@ column_mapping = {
     "{{CompanyDomain}}": None,
     "{{CompanyNumber}}": None,
     "{{CompanyLawsState}}": None,
-    "{{CompanyVATNumber}}" : None,
+    "{{CompanyVATNumber}}": None,
     "{{CompanyAddress}}": None,
     "{{QuoteDate}}": None,
     "{{Currency}}": None,
@@ -40,6 +40,35 @@ credentials = service_account.Credentials.from_service_account_file(service_acco
 docs_service = build('docs', 'v1', credentials=credentials)
 drive_service = build('drive', 'v3', credentials=credentials)
 
+
+def get_linked_item_details(linked_item_id):
+    """ Helper function to get more details about a linked item """
+    url = "https://api.monday.com/v2"
+
+    query = '''
+    query {{
+        items(ids: [{linked_item_id}]) {{
+            id
+            name
+            column_values {{
+                text
+                value
+            }}
+        }}
+    }}
+    '''.format(linked_item_id=linked_item_id)
+
+    headers = {
+        "Authorization": api_token,
+        "Content-Type": "application/json"
+    }
+
+    response = requests.post(url, headers=headers, json={"query": query})
+    linked_item_data = response.json()
+
+    return linked_item_data
+
+
 def get_items_from_board():
     url = "https://api.monday.com/v2"
     query = '''
@@ -55,6 +84,12 @@ def get_items_from_board():
                         column_values {{
                             text
                             value
+                            ... on BoardRelationValue {{
+                                linked_items {{
+                                    id
+                                    name
+                                }}
+                            }}
                         }}
                     }}
                 }}
@@ -69,99 +104,164 @@ def get_items_from_board():
     }
     response = requests.post(url, headers=headers, json={"query": query})
     monday_data = response.json()
+
     items_list = []
 
+    # Extract items
     items = monday_data['data']["boards"][0]["groups"][0]['items_page']['items']
+
     for item in items:
-        item_id = item['id']
-        item_name = item['name']
-        column_values = []
+        item_details = {
+            'id': item['id'],
+            'name': item['name'],
+            'columns': [],
+        }
 
+        # Loop through each column to find linked items
         for column in item['column_values']:
-            text_value = column.get('text', '')
-            json_value = column.get('value')
+            column_info = {
+                'column_id': column.get('id', 'N/A'),  # Default to 'N/A' if id is not present
+                'column_name': column.get('text', 'N/A'),  # Default to 'N/A' if text is not present
+                'linked_items': []
+            }
 
-            if json_value:
-                parsed_value = json.loads(json_value)
-                if 'linkedPulseIds' in parsed_value:
-                    linked_items = parsed_value['linkedPulseIds']
-                    linked_item_details = []
-                    for linked_item in linked_items:
-                        linked_item_id = linked_item['linkedPulseId']
-                        linked_details = fetch_linked_item_details(linked_item_id)
-                        linked_item_details.append(linked_details)
-                    column_values.append(", ".join(linked_item_details))
-                else:
-                    column_values.append(text_value)
-            else:
-                column_values.append(text_value)
+            # Check if the column has linked items
+            if 'linked_items' in column:
+                for linked_item in column['linked_items']:
+                    # Fetch additional details about each linked item
+                    linked_item_details = get_linked_item_details(linked_item['id'])
 
-        item_details_dict = map_columns_to_dict(column_values)
-        items_list.append({"Item ID": item_id, "Name": item_name, "Columns": item_details_dict})
+                    column_info['linked_items'].append({
+                        'linked_item_id': linked_item['id'],
+                        'linked_item_name': linked_item['name'],
+                        'linked_item_details': linked_item_details['data']['items'][0]
+                        # Additional details from linked item
+                    })
+
+            item_details['columns'].append(column_info)
+
+        items_list.append(item_details)
 
     return items_list
 
 
-def map_columns_to_dict(column_values):
-    mapped_dict = column_mapping.copy()
-    columns_list = list(mapped_dict.keys())
+def process_data_to_requested_structure(items_list):
+    """Process the data into the requested structure with specific column mapping"""
+    result = []
 
-    for index, value in enumerate(column_values):
-        if index < len(columns_list):
-            mapped_dict[columns_list[index]] = value
+    for item in items_list:
+        # Initialize the structured item
+        structured_item = {
+            'Item ID': item['id'],
+            'Name': item['name'],
+            'Columns': column_mapping.copy()  # Start with all None values
+        }
 
-    # Extract SalesManagerName and SalesManagerEmail from the formatted text
-    sales_manager_details = mapped_dict.get("{{SalesManagerName}}", "")
-    if sales_manager_details:
-        match = re.match(r'([^(]+)\s*\(.*?,\s*([^,]+)', sales_manager_details)
-        if match:
-            mapped_dict["{{SalesManagerName}}"] = match.group(1).strip()
-            mapped_dict["{{SalesManagerEmail}}"] = match.group(2).strip()
+        # Set the company name to the item name
+        structured_item['Columns']['{{CompanyFullName}}'] = item['name']
 
-    # Extract CEName and CEmail from the formatted text
-    ce_details = mapped_dict.get("{{CEName}}", "")
-    if ce_details:
-        match = re.match(r'([^(]+)\s*\(.*?,\s*([^,]+)', ce_details)
-        if match:
-            mapped_dict["{{CEName}}"] = match.group(1).strip()
-            mapped_dict["{{CEEmail}}"] = match.group(2).strip()
+        # Initialize counters to track which columns we've processed
+        linked_item_count = 0  # Track position of linked items
+        sales_manager_found = False
+        ce_found = False
+        templates_found = False
+        action_found = False
 
-    return mapped_dict
+        # Process each column in order
+        column_position = 0
+        mapping_keys = list(column_mapping.keys())
 
+        # First pass - handle the simple text columns
+        for i, column in enumerate(item['columns']):
+            if column['column_name'] == item['name']:
+                continue
 
+            # For regular columns with text values that aren't relationships
+            if not column['linked_items'] and column['column_name'] not in [None, 'N/A']:
+                if i < len(mapping_keys) and structured_item['Columns'][mapping_keys[i]] is None:
+                    structured_item['Columns'][mapping_keys[i]] = column['column_name']
 
-def fetch_linked_item_details(item_id):
-    url = "https://api.monday.com/v2"
-    query = '''
-    query {{
-        items(ids: {item_id}) {{
-            id
-            name
-            column_values {{
-                text
-            }}
-        }}
-    }}
-    '''.format(item_id=item_id)
+        # Second pass - look for "Action" status column
+        for column in item['columns']:
+            if column['column_name'] and 'Generate' in column['column_name']:
+                structured_item['Columns']['Action'] = column['column_name']
+                action_found = True
+                break
 
-    headers = {
-        "Authorization": api_token,
-        "Content-Type": "application/json"
-    }
-    response = requests.post(url, headers=headers, json={"query": query})
-    linked_item_data = response.json()
+        # Third pass - handle linked items and specific columns
+        for column in item['columns']:
+            # Look for templates - they'll have multiple linked items
+            if column['linked_items'] and len(column['linked_items']) > 1:
+                urls = []
+                for linked_item in column['linked_items']:
+                    for column_value in linked_item['linked_item_details']['column_values']:
+                        if column_value.get('text') and column_value['text'] is not None and 'https://' in str(
+                                column_value['text']):
+                            urls.append(column_value['text'])
+                            break
 
-    if 'data' in linked_item_data and linked_item_data['data']['items']:
-        item_details = linked_item_data['data']['items'][0]
-        linked_item_name = item_details['name']
-        links = [col['text'] for col in item_details['column_values'] if col['text']]
-        return f"{linked_item_name} ({', '.join(links)})"
+                structured_item['Columns']['Contracts Templates'] = urls
+                templates_found = True
 
-    return f"Linked Item ID: {item_id}"
+            # Look for destination folder
+            elif column['column_name'] and 'drive.google.com' in column['column_name']:
+                structured_item['Columns']['Destination Folder'] = column['column_name']
+
+            # Look for people (Sales Manager and CE)
+            elif column['linked_items'] and len(column['linked_items']) == 1:
+                linked_person = column['linked_items'][0]
+
+                # If we haven't found the Sales Manager yet
+                if not sales_manager_found:
+                    structured_item['Columns']['{{SalesManagerName}}'] = linked_person['linked_item_name']
+
+                    # Find email in linked_item_details
+                    for column_value in linked_person['linked_item_details']['column_values']:
+                        if column_value.get('text') and column_value['text'] and '@' in str(column_value['text']):
+                            structured_item['Columns']['{{SalesManagerEmail}}'] = column_value['text']
+                            break
+
+                    sales_manager_found = True
+
+                # If we've found Sales Manager but not CE yet
+                elif not ce_found:
+                    structured_item['Columns']['{{CEName}}'] = linked_person['linked_item_name']
+
+                    # Find email in linked_item_details
+                    for column_value in linked_person['linked_item_details']['column_values']:
+                        if column_value.get('text') and column_value['text'] and '@' in str(column_value['text']):
+                            structured_item['Columns']['{{CEEmail}}'] = column_value['text']
+                            break
+
+                    ce_found = True
+
+        # Final pass - fill in the remaining columns based on position
+        for i, column in enumerate(item['columns']):
+            if i < len(mapping_keys) and column['column_name'] not in [None, 'N/A', item['name']]:
+                key = mapping_keys[i]
+                # Don't overwrite already set values
+                if structured_item['Columns'][key] is None:
+                    structured_item['Columns'][key] = column['column_name']
+
+        result.append(structured_item)
+
+    return result
+
 
 def modify_google_doc(doc_id, replacements):
     requests = []
     for placeholder, value in replacements.items():
+        if value is None:
+            value = ""  # Handle None values
+        elif isinstance(value, list):
+            value = ", ".join(str(item) for item in value)  # Join lists into strings
+        else:
+            value = str(value)  # Convert any other types to string
+
+        # Skip empty placeholders to avoid issues
+        if not placeholder.strip():
+            continue
+
         requests.append({
             'replaceAllText': {
                 'containsText': {
@@ -173,7 +273,14 @@ def modify_google_doc(doc_id, replacements):
         })
 
     if requests:
-        docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests}).execute()
+        try:
+            docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests}).execute()
+            print(f"Successfully updated document {doc_id}")
+        except Exception as e:
+            print(f"Error updating document {doc_id}: {e}")
+            # Print more details for debugging
+            print(f"Request structure: {json.dumps(requests[:3], indent=2)}")  # Print first 3 for clarity
+
 
 
 def copy_and_modify_template(template_url, destination_folder_id, replacements, item_name, item_id):
@@ -206,26 +313,6 @@ def copy_and_modify_template(template_url, destination_folder_id, replacements, 
         return None
 
 
-def update_item_status(item_id, status_label):
-    url = "https://api.monday.com/v2"
-    query = '''
-    mutation {{
-        change_column_value(board_id: {board_id}, item_id: {item_id}, column_id: "status__1", value: "{{\\"label\\": \\"{status_label}\\"}}") {{
-            id
-        }}
-    }}
-    '''.format(board_id=board_id, item_id=item_id, status_label=status_label)
-
-    headers = {
-        "Authorization": api_token,
-        "Content-Type": "application/json"
-    }
-    requests.post(url, headers=headers, json={"query": query})
-
-
-
-
-
 def send_completion_update(item_id, document_links):
     links_message = "\n".join([f"Link {index + 1}: {link}" for index, link in enumerate(document_links)])
     message = f"The task has been completed successfully. Here are the links to the new documents:\n{links_message}"
@@ -248,41 +335,61 @@ def send_completion_update(item_id, document_links):
     }
     requests.post(url, headers=headers, json={"query": query})
 
+def update_item_status(item_id, status_label):
+    url = "https://api.monday.com/v2"
+    query = '''
+    mutation {{
+        change_column_value(board_id: {board_id}, item_id: {item_id}, column_id: "status__1", value: "{{\\"label\\": \\"{status_label}\\"}}") {{
+            id
+        }}
+    }}
+    '''.format(board_id=board_id, item_id=item_id, status_label=status_label)
 
+    headers = {
+        "Authorization": api_token,
+        "Content-Type": "application/json"
+    }
+    requests.post(url, headers=headers, json={"query": query})
 
 
 def main():
-    output = get_items_from_board()
+    items_list = get_items_from_board()
+    output= process_data_to_requested_structure(items_list)
     print(output)
     for item in output:
         item_columns = item['Columns']
         update_item_status(item['Item ID'], "Working on it")
-
         replacements = {key: value for key, value in item_columns.items() if value}
+        print(replacements)
 
+        # Get the list of template URLs
         contracts_templates = item_columns.get("Contracts Templates", "")
+        print(contracts_templates)
         destination_folder_url = item_columns.get("Destination Folder", "")
 
         folder_id_match = re.search(r'folders/([a-zA-Z0-9-_]+)|id=([a-zA-Z0-9-_]+)', destination_folder_url)
         destination_folder_id = folder_id_match.group(1) if folder_id_match else None
 
-        template_urls = re.findall(r'(https?://[^\s),]+)', contracts_templates)
+        template_urls = re.findall(r'(https?://[^\s),]+)', ' '.join(contracts_templates))
+
 
         document_links = []
         for template_url in template_urls:
             if destination_folder_id:
-                 doc_link = copy_and_modify_template(
-                       template_url=template_url,
-                       destination_folder_id=destination_folder_id,
-                       replacements=replacements,
-                       item_name=item['Name'],
-                       item_id=item['Item ID']
-                    )
-                 if doc_link:
-                        document_links.append(doc_link)
+                doc_link = copy_and_modify_template(
+                    template_url=template_url,
+                    destination_folder_id=destination_folder_id,
+                    replacements=replacements,
+                    item_name=item['Name'],
+                    item_id=item['Item ID']
+                )
+                if doc_link:
+                    document_links.append(doc_link)
 
         send_completion_update(item['Item ID'], document_links)
         update_item_status(item['Item ID'], "Generate completed")
+
+
 
 if __name__ == "__main__":
     main()
